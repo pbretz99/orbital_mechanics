@@ -1,65 +1,62 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, 
     NavigationToolbar2Tk,
 )
-from matplotlib.axes import Axes
-from typing import Optional
+from tkinter import *
+from typing import Optional, Any
 
 import numpy as np
-import tkinter as tk
 
 from orbital_mechanics.orbits.elliptic import EllipticOrbit
+from orbital_mechanics.visualization.plotter import (
+    PlotParams,
+    OrbitPlotter,
+)
 
 
 @dataclass
-class PlotParams:
-    lookahead_color: Optional[str] = "C0"
-    lookahead_s: float = 86400 # 1 day
-    lookahead_N_segs: int = 12
-    lookahead_min_alpha: float = 0.0
-    trace_color: Optional[str] = "C0"
-    trace_N_segs: int = 1000
-    center_color: Optional[str] = "C0"
+class ParameterBase(ABC):
+    label: str
+    error_msg: str
+    units: Optional[str] = None
+
+    @abstractmethod
+    def validate_input(self, input: str) -> Any:
+        pass
 
 
 @dataclass
-class OrbitPlotter:
-    ax: Axes
-    orbit: EllipticOrbit
-    plot_params: PlotParams = field(default_factory=PlotParams)
+class Bound:
+    value: float
+    strict: bool = False
 
-    def add_center(self) -> None:
-        if self.plot_params.center_color is not None:
-            self.ax.scatter([0], [0], c=self.plot_params.center_color)
-    
-    def add_trace(self) -> None:
-        if self.plot_params.trace_color is not None:
-            trace = self.orbit.trace(N_segments=self.plot_params.trace_N_segs)
-            self.ax.plot(trace.x, trace.y, c=self.plot_params.trace_color)
+@dataclass
+class FloatParameter(ParameterBase):
+    lower: Optional[Bound] = None
+    upper: Optional[Bound] = None
 
-    def add_lookahead(self) -> None:
-        if self.plot_params.lookahead_color is not None:
-            t_s = np.linspace(0, self.plot_params.lookahead_s, self.plot_params.lookahead_N_segs + 1)
-            trajectory = self.orbit.trajectory(t_s=t_s)
-            t_norm = (t_s - t_s[0]) / (t_s[-1] - t_s[0])
-            min_alpha = self.plot_params.lookahead_min_alpha
-            alpha = (1 - t_norm) * (1 - min_alpha) + min_alpha
-            self.ax.scatter(trajectory.x, trajectory.y, c="C0", alpha=alpha)
-
-    def plot(self) -> None:
-        self.add_trace()
-        self.add_lookahead()
-        self.add_center()
-        self.ax.axis("equal")
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
-
+    def validate_input(self, input: str) -> float:
+        input_float = float(input)
+        if self.lower is not None:
+            if input_float < self.lower.value:
+                raise ValueError
+            if self.lower.strict and input_float == self.lower.value:
+                raise ValueError
+        if self.upper is not None:
+            if input_float > self.upper.value:
+                raise ValueError
+            if self.upper.strict and input_float == self.upper.value:
+                raise ValueError
+        return input_float
+        
 
 @dataclass
 class OrbitViewer:
-    window: tk.Tk
+    window: Tk
     orbit: EllipticOrbit = field(default_factory=EllipticOrbit)
     plot_params: PlotParams = field(default_factory=PlotParams)
 
@@ -82,51 +79,61 @@ class OrbitViewer:
             fig,
             self.window,
         ) 
-        canvas.draw() 
+        canvas.draw()
 
         # placing the canvas on the Tkinter window 
-        canvas.get_tk_widget().pack() 
-
-        # creating the Matplotlib toolbar 
-        toolbar = NavigationToolbar2Tk(
-            canvas,
-            self.window,
-        ) 
-        toolbar.update() 
-
-        # placing the toolbar on the Tkinter window 
-        canvas.get_tk_widget().pack() 
+        canvas.get_tk_widget().grid(column=0, row=0)
 
         
 
 
 # the main Tkinter window 
-window = tk.Tk() 
+window = Tk() 
 
 # setting the title 
 window.title('Plotting in Tkinter') 
 
 # dimensions of the main window 
-window.geometry("500x500") 
+window.geometry("700x500") 
 
+viewer_frm = Frame(window)
 viewer = OrbitViewer(
-    window=window,
-    orbit=EllipticOrbit(reference_true_anomaly_rad=np.pi / 2, eccentricity=0.5, omega_rad=np.pi / 3),
-    plot_params=PlotParams(lookahead_min_alpha=0.2, lookahead_N_segs=6, trace_color=None)
+    window=viewer_frm,
 )
+viewer_frm.grid(row=0, column=2)
+
+input_frm = Frame(window)
+eccentricity_param = FloatParameter("e", "e must be in [0, 1)", lower=Bound(0), upper=Bound(1, strict=True))
+
+e_frm = Frame(input_frm)
+e_lbl = Label(e_frm, text=f"{eccentricity_param.label} : ")
+e_txt = Entry(e_frm, width=6)
+e_err_lbl = Label(e_frm, text="", width=15)
+for i, widget in enumerate([e_lbl, e_txt, e_err_lbl]):
+    widget.grid(row=0, column=i)
+e_frm.grid(row=0, column=0)
+input_frm.grid(row=0, column=0)
+
+def render():
+    try:
+        e = eccentricity_param.validate_input(e_txt.get())
+        e_err_lbl.configure(text="")
+        viewer.orbit.eccentricity = e
+    except:
+        e_err_lbl.configure(text=eccentricity_param.error_msg, fg="red")
+    viewer.plot()
 
 # button that displays the plot 
-plot_button = tk.Button(
+plot_button = Button(
     master=window, 
-    command=viewer.plot, 
-    height=2, 
-    width=10, 
+    command=render, 
     text="Plot"
 )
 
 # place the button 
 # in main window 
-plot_button.pack() 
+plot_button.grid(column=1, row=0)
+viewer.plot()
 
 # run the gui 
 window.mainloop() 
